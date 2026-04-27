@@ -1,0 +1,17 @@
+{
+  "name": "bsg-utilities",
+  "version": "1.0.0",
+  "description": "BSG Utilities Discord Bot",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "deploy": "node deploy-commands.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.26.3",
+    "dotenv": "^16.4.5",
+    "mongodb": "^7.2.0",
+    "node.js": "^0.0.1-security"
+  }
+}
