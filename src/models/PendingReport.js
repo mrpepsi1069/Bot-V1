@@ -1,22 +1,23 @@
-import { ObjectId } from 'mongodb';
-import { collections, ensureDB } from '../config/database.js';
+import { getDB, formatRow } from '../config/database.js';
 
 export const PendingReport = {
-  async create(data) {
-    await ensureDB();
-    const doc = { ...data, createdAt: new Date() };
-    const result = await collections.pendingreports().insertOne(doc);
-    doc._id = result.insertedId;
-    return doc;
-  },
+    async create(data) {
+        const db = getDB();
+        const doc = { data: JSON.stringify({ ...data, createdAt: new Date() }), createdAt: new Date() };
+        const [result] = await db.execute('INSERT INTO pendingreports (data, createdAt) VALUES (?, ?)', [doc.data, doc.createdAt]);
+        return { ...JSON.parse(doc.data), id: result.insertId, _id: result.insertId.toString() };
+    },
 
-  async findOne(id) {
-    await ensureDB();
-    return collections.pendingreports().findOne({ _id: new ObjectId(id) });
-  },
+    async findOne(id) {
+        const db = getDB();
+        const [rows] = await db.execute('SELECT * FROM pendingreports WHERE id = ?', [id]);
+        if (!rows[0]) return null;
+        const parsed = JSON.parse(rows[0].data);
+        return { ...parsed, id: rows[0].id, _id: rows[0].id.toString() };
+    },
 
-  async deleteOne(id) {
-    await ensureDB();
-    return collections.pendingreports().deleteOne({ _id: new ObjectId(id) });
-  },
+    async deleteOne(id) {
+        const db = getDB();
+        return db.execute('DELETE FROM pendingreports WHERE id = ?', [id]);
+    },
 };

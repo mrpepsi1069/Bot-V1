@@ -1,9 +1,7 @@
 import { Client, GatewayIntentBits, EmbedBuilder, REST, Routes, Collection, ActionRowBuilder, ButtonBuilder, ButtonStyle, StringSelectMenuBuilder } from 'discord.js';
-import { ObjectId } from 'mongodb';
 import dotenv from 'dotenv';
-import { connectDB, ensureDB, getDB } from './src/config/database.js';
+import { connectDB, ensureDB } from './src/config/database.js';
 import { Team, GuildConfig, GameThread } from './src/models/index.js';
-import { getTeamThumbnail, setGuildHeader } from './src/utils/permissions.js';
 
 dotenv.config();
 
@@ -34,7 +32,6 @@ const cmdModules = [
   './src/commands/setbloxlinkapi.js',
   './src/commands/testreminder.js',
   './src/commands/setfranchiselist.js',
-  './src/commands/rankedschedule.js',
 ];
 
 for (const modPath of cmdModules) {
@@ -48,7 +45,7 @@ for (const modPath of cmdModules) {
     // Additional commands (data2, data3, etc. OR data_qb, data_wr, etc.)
     const patterns = [];
     for (let i = 2; i <= 10; i++) patterns.push(`data${i}`, `execute${i}`);
-    patterns.push('data_qb', 'execute_qb', 'data_wr', 'execute_wr', 'data_cb', 'execute_cb', 'data_de', 'execute_de', 'data_k', 'execute_k', 'data_lb', 'execute_lb', 'data_win', 'execute_win', 'data_loss', 'execute_loss', 'data_pd', 'execute_pd', 'data_promote', 'execute_promote', 'data_demote', 'execute_demote', 'data_offer', 'execute_offer', 'data_demand', 'execute_demand', 'data_random');
+    patterns.push('data_qb', 'execute_qb', 'data_wr', 'execute_wr', 'data_cb', 'execute_cb', 'data_de', 'execute_de', 'data_k', 'execute_k', 'data_lb', 'execute_lb', 'data_win', 'execute_win', 'data_loss', 'execute_loss', 'data_pd', 'execute_pd', 'data_promote', 'execute_promote', 'data_demote', 'execute_demote');
     
     for (let i = 0; i < patterns.length; i += 2) {
       const dataKey = patterns[i];
@@ -65,8 +62,6 @@ for (const modPath of cmdModules) {
 
 client.once('ready', async () => {
   console.log(`${client.user.username} online as ${client.user.tag}`);
-  
-  console.log('All command names:', commands.map(c => c.name));
   
   const rest = new REST({ version: '10' }).setToken(process.env.BOT_TOKEN);
   const clientId = client.user.id;
@@ -296,7 +291,7 @@ async function handleButtonInteraction(interaction) {
     return;
   }
 
-// ── Reject report ────────────────────────────────────────────────────────
+  // ── Reject report ────────────────────────────────────────────────────────
   if (customId.startsWith('reject_report:')) {
     const pendingId = customId.split(':')[1];
     try {
@@ -311,9 +306,7 @@ async function handleButtonInteraction(interaction) {
         .spliceFields(3, 1, { name: 'Status:', value: '> ❌ Rejected', inline: false });
 
       await interaction.update({ embeds: [rejectedEmbed], components: [] });
-
-      await interaction.followUp({ content: '❌ Report rejected.', ephemeral: true });
-
+      await interaction.followUp({ content: '❌ Report rejected and removed from queue.', ephemeral: true });
     } catch (err) {
       console.error('[Reject Error]', err);
       try { await interaction.reply({ content: `❌ Rejection failed: ${err.message}`, ephemeral: true }); } catch {}
@@ -321,36 +314,17 @@ async function handleButtonInteraction(interaction) {
     return;
   }
 
-  // ── Ranked/Random schedule buttons ─────────────────────────────────────────────
-  if (customId.startsWith('ranked_create_threads:') || customId.startsWith('random_create_threads:') || customId.startsWith('random_reroll:') || customId === 'ranked_deadline' || customId === 'random_deadline' || customId.includes('_deadline_')) {
-    const { handleButton } = await import('./src/commands/rankedschedule.js');
-    await handleButton(interaction);
-    return;
-  }
-
   // ── Delete threads buttons ───────────────────────────────────────────────
   if (customId === 'delete_threads_yes') {
-    const threads = [...interaction.channel.threads.cache.values()];
-    let deleted = 0;
-    for (const thread of threads) {
-      try { await thread.delete(); deleted++; } catch {}
+    for (const thread of interaction.channel.threads.cache.values()) {
+      try { await thread.delete(); } catch {}
     }
-    if (interaction.message) {
-      await interaction.update({ components: [] });
-      await interaction.followUp({ content: `✅ Deleted ${deleted} threads.`, ephemeral: true });
-    } else {
-      await interaction.reply({ content: `✅ Deleted ${deleted} threads.`, ephemeral: true });
-    }
+    await interaction.reply({ content: '✅ All threads deleted.', ephemeral: true });
     return;
   }
-
+  
   if (customId === 'delete_threads_no') {
-    if (interaction.message) {
-      await interaction.update({ components: [] });
-      await interaction.followUp({ content: '❌ Cancelled.', ephemeral: true });
-    } else {
-      await interaction.reply({ content: '❌ Cancelled.', ephemeral: true });
-    }
+    await interaction.reply({ content: '❌ Cancelled.', ephemeral: true });
     return;
   }
   
@@ -370,70 +344,10 @@ async function handleButtonInteraction(interaction) {
   
   // Offer buttons
   if (customId.startsWith('offer_')) {
-    const [action, teamId, userId, guildIdFromButton] = customId.split(':');
-    
-    let team;
-    let guild;
-    
-    try {
-      team = await Team.findById(new ObjectId(teamId));
-    } catch (e) {}
-    
-    if (team) {
-      guild = await client.guilds.fetch(team.guildId);
-    }
-    
-    if (!team) {
-      return interaction.reply({ content: '❌ Team not found.', flags: 64 });
-    }
-    
-    if (action === 'offer_accept') {
-      const target = interaction.user;
-      
-      const existingTeams = await Team.find(team.guildId);
-      for (const t of existingTeams) {
-        if ((t.roster || []).includes(target.id.toString())) {
-          await Team.updateOne(t._id.toString(), { $pull: { roster: target.id.toString() } });
-          const oldRole = guild.roles.cache.get(t.roleId);
-          if (oldRole) {
-            try {
-              const mem = await guild.members.fetch(target.id);
-              if (mem) await mem.roles.remove(oldRole);
-            } catch {}
-          }
-        }
-      }
-      
-      await Team.updateOne(team._id.toString(), { $addToSet: { roster: target.id.toString() } });
-      
-      const teamRole = guild.roles.cache.get(team.roleId);
-      const teamColor = teamRole?.color || 0x5865F2;
-      
-      const txEmbed = new EmbedBuilder()
-        .setTitle('Signed')
-        .setDescription(`${team.teamEmoji || ''} ${team.teamName || ''} has signed ${target}`)
-        .setColor(teamColor);
-      
-      setGuildHeader(txEmbed, guild);
-      const thumbUrl = getTeamThumbnail(team.teamEmoji || '');
-      if (thumbUrl) txEmbed.setThumbnail(thumbUrl);
-      txEmbed.addFields({
-        name: '\u200b',
-        value: `> **Coach:** ${interaction.user} ${interaction.user.displayName}`,
-        inline: false
-      });
-      txEmbed.setFooter({ text: `${interaction.user.displayName} • Today at ${new Date().toLocaleTimeString()}`, iconURL: interaction.user.displayAvatarURL() });
-      
-      const config = await GuildConfig.findOne(team.guildId);
-      const txId = config?.channels?.transactions;
-      if (txId) {
-        const ch = guild.channels.cache.get(txId);
-        if (ch) await ch.send({ embeds: [txEmbed] });
-      }
-      
-      await interaction.reply({ content: `✅ You have been signed by **${team.teamName || ''}**!`, flags: 64 });
-    } else if (action === 'offer_decline') {
-      await interaction.reply({ content: '❌ Offer declined.', flags: 64 });
+    if (customId === 'offer_accept') {
+      await interaction.reply({ content: '✅ Offer accepted! Contact the franchise owner for next steps.', ephemeral: true });
+    } else if (customId === 'offer_decline') {
+      await interaction.reply({ content: '❌ Offer declined.', ephemeral: true });
     }
     return;
   }
@@ -442,7 +356,7 @@ async function handleButtonInteraction(interaction) {
 }
 
 async function startBot() {
-  console.log('Connecting to MongoDB...');
+  console.log('Connecting to MySQL...');
   await ensureDB();
   console.log('Database connected successfully');
   
